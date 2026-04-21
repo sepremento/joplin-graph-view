@@ -4,3 +4,5 @@ publish/
 
 *.code-workspace
 .vscode/
+
+.DS_Store
