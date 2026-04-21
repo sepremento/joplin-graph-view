@@ -7,14 +7,17 @@ const distOutput = document.getElementById("distance-output") as HTMLOutputEleme
 
 const groupInput = document.getElementById("group-stub") as HTMLInputElement;
 const addGroupBtn = document.getElementById("add-group-btn") as HTMLInputElement;
+const refreshGraphBtn = document.getElementById("refresh-graph-btn") as HTMLInputElement;
 
 const textWidthInput = document.getElementById("text-width-input") as HTMLInputElement;
 const centerStrengthInput = document.getElementById("center-strength-input") as HTMLInputElement;
 const chargeStrengthInput = document.getElementById("charge-strength-input") as HTMLInputElement;
 const collideRadiusInput = document.getElementById("nocollide-radius-input") as HTMLInputElement;
 const linkDistanceInput = document.getElementById("link-distance-input") as HTMLInputElement;
+const showTagNodesSwitch = document.getElementById("show-tag-nodes-switch") as HTMLInputElement;
 const showTagsSwitch = document.getElementById("show-tags-switch") as HTMLInputElement;
 const includeBacklinksSwitch = document.getElementById("include-backlinks-switch") as HTMLInputElement;
+const scopeNotebookSwitch = document.getElementById("scope-notebook-switch") as HTMLInputElement;
 const maxDistInput = document.getElementById("distance-slider") as HTMLInputElement;
 const temperatureInput = document.getElementById("temperature-slider") as HTMLInputElement;
 
@@ -63,10 +66,7 @@ function drag(ev) {
 }
 
 function chromeRangeInputFix() {
-    // workaround for chrome concerning range inputs,
-    // not allowing slider to be dragged.
-    // See https://stackoverflow.com/q/69490604
-    // todo: is there a better solution?
+    // Chrome bug: range inputs block drag without this. https://stackoverflow.com/q/69490604
     document
         .querySelectorAll('input[type="range"]')
         .forEach((input) => {
@@ -79,8 +79,10 @@ function chromeRangeInputFix() {
 export function setupGraphHandle(settings) {
     queryInput.value = settings.QUERY;
     filterInput.value = settings.FILTER;
+    showTagNodesSwitch.checked = settings.SHOW_TAG_NODES;
     showTagsSwitch.checked = settings.SHOW_TAGS;
     includeBacklinksSwitch.checked = settings.INCLUDE_BACKLINKS;
+    scopeNotebookSwitch.checked = settings.SCOPE_TO_NOTEBOOK;
     maxDistInput.value = settings.MAX_TREE_DEPTH;
     distOutput.innerHTML = Number(settings.MAX_TREE_DEPTH) >= 0 ? settings.MAX_TREE_DEPTH : "G";
 
@@ -173,7 +175,7 @@ export function addGroupEventListeners(setSetting) {
     }
 }
 
-export function initFront(initialValues, setSetting) {
+export function initFront(initialValues, setSetting, refreshGraph) {
 
     chromeRangeInputFix();
     setupGraphHandle(initialValues);
@@ -215,11 +217,17 @@ export function initFront(initialValues, setSetting) {
     temperatureInput.addEventListener("change", () => {
         setSetting("ALPHA", temperatureInput.valueAsNumber);
     });
+    showTagNodesSwitch.addEventListener("change", () => {
+        setSetting("SHOW_TAG_NODES", showTagNodesSwitch.checked);
+    });
     showTagsSwitch.addEventListener("change", () => {
         setSetting("SHOW_TAGS", showTagsSwitch.checked);
     });
     includeBacklinksSwitch.addEventListener("change", () => {
         setSetting("INCLUDE_BACKLINKS", includeBacklinksSwitch.checked);
+    });
+    scopeNotebookSwitch.addEventListener("change", () => {
+        setSetting("SCOPE_TO_NOTEBOOK", scopeNotebookSwitch.checked);
     });
     maxDistInput.addEventListener("change", () => {
         setSetting("MAX_TREE_DEPTH", maxDistInput.value);
@@ -272,6 +280,8 @@ export function initFront(initialValues, setSetting) {
     });
 
     addGroupEventListeners(setSetting);
+
+    refreshGraphBtn.addEventListener("click", () => { refreshGraph(); });
 }
 
 function generateRandomString(length) {

@@ -1,8 +1,9 @@
 import joplin from "api";
 import * as joplinData from "./data";
+import { parseTimelineEvents } from "./timeline-data";
 import { registerSettings } from "./settings";
 import { ColorGroup, DataSpec, GraphData } from "./model";
-import { MenuItemLocation, ToolbarButtonLocation } from "api/types";
+import { ContentScriptType, MenuItemLocation, ToolbarButtonLocation } from "api/types";
 import { panelHtml } from "./panel-html";
 
 let data: GraphData;
@@ -13,7 +14,7 @@ var prevNoteLinks = [];
 var prevNoteTitle: string;
 var prevSettings: any = {};
 var syncOngoing = false;
-const USER_INPUT = ["QUERY", "FILTER", "MAX_TREE_DEPTH", "SHOW_TAGS", "GROUPS", "INCLUDE_BACKLINKS"]
+const USER_INPUT = new Set(["QUERY", "FILTER", "MAX_TREE_DEPTH", "SHOW_TAGS", "SHOW_TAG_NODES", "GROUPS", "INCLUDE_BACKLINKS", "SCOPE_TO_NOTEBOOK"])
 
 
 joplin.plugins.register({
@@ -31,9 +32,35 @@ joplin.plugins.register({
 
         panels.onMessage(graphPanel, processWebviewMessage);
 
+        await joplin.contentScripts.register(
+            ContentScriptType.CodeMirrorPlugin,
+            'noteLinker',
+            './editor/noteLinker.js'
+        );
+        await joplin.contentScripts.onMessage('noteLinker', async (message) => {
+            if (message.action !== 'searchNotes') return [];
+            const query = (message.query || '').trim();
+            if (query) {
+                const results = await joplin.data.get(['search'], {
+                    query: query,
+                    fields: ['id', 'title'],
+                    limit: 10,
+                });
+                return results.items || [];
+            } else {
+                const results = await joplin.data.get(['notes'], {
+                    fields: ['id', 'title'],
+                    order_by: 'updated_time',
+                    order_dir: 'DESC',
+                    limit: 10,
+                });
+                return results.items || [];
+            }
+        });
+
         // Setup callbacks
         await joplin.workspace.onNoteChange(async (ev) => {
-            if (ev.event === 2) updateUI("noteChange");
+            if (ev.event === 2) updateUI("noteChange", ev.id);
         });
         await joplin.workspace.onNoteSelectionChange(async () => {
             updateUI("noteSelectionChange");
@@ -46,7 +73,7 @@ joplin.plugins.register({
             updateUI("syncComplete");
         });
         await joplin.settings.onChange(async (ev) => {
-            if (!USER_INPUT.includes(ev.keys[0]))
+            if (!USER_INPUT.has(ev.keys[0]))
                 updateUI("pushSettings");
         });
     },
@@ -54,9 +81,9 @@ joplin.plugins.register({
 
 async function collectGraphSettings() {
     return await joplin.settings.values([
-        'FILTER', 'MAX_TREE_DEPTH', 'QUERY', 'SHOW_TAGS', 'INCLUDE_BACKLINKS', 'GROUPS',
+        'FILTER', 'MAX_TREE_DEPTH', 'QUERY', 'SHOW_TAGS', 'SHOW_TAG_NODES', 'INCLUDE_BACKLINKS', 'GROUPS',
         'ALPHA', 'CENTER_STRENGTH', 'CHARGE_STRENGTH', 'COLLIDE_RADIUS', 'LINK_DISTANCE',
-        'MAX_TEXT_WIDTH'
+        'MAX_TEXT_WIDTH', 'SCOPE_TO_NOTEBOOK'
     ]);
 }
 
@@ -72,10 +99,18 @@ async function fetchData(spec: DataSpec) {
         }
     }
 
+    let notebookId: string | undefined;
+    const scopeToNotebook = await joplin.settings.value("SCOPE_TO_NOTEBOOK");
+    if (scopeToNotebook) {
+        const selectedFolder = await joplin.workspace.selectedFolder();
+        notebookId = selectedFolder?.id;
+    }
+
     const nodes = await joplinData.getNodes(
         fetchForNoteIds,
         spec.degree,
-        spec.filterQuery
+        spec.filterQuery,
+        notebookId
     );
 
     const data: GraphData = {
@@ -105,14 +140,15 @@ async function fetchData(spec: DataSpec) {
         data.nodes.push({
             id: id,
             title: node.title,
-            color: "",
+            color: node.color || "",
             faded: false,
             focused: false,
             is_tag: node.is_tag,
             num_links: node.num_links,
             num_forwardlinks: node.num_forwardlinks,
             num_backlinks: node.num_backlinks,
-            distanceToCurrentNode: node.distanceToCurrentNode
+            distanceToCurrentNode: node.distanceToCurrentNode,
+            body_size: node.body_size || 0
         });
 
     }
@@ -182,16 +218,21 @@ async function processWebviewMessage(message: any) {
         case "set_setting":
             if (message.key === "GROUPS") {
                 updateUI("colorsChange");
-            } else if (USER_INPUT.includes(message.key)) {
+            } else if (USER_INPUT.has(message.key)) {
                 updateUI("noteSelectionChange");
             } else {
                 updateUI("pushSettings");
             }
             return await joplin.settings.setValue(message.key, message.value);
+        case "refresh_graph":
+            updateUI("noteSelectionChange");
+            return;
+        case "get_timeline":
+            return await getTimelineData();
     }
 }
 
-async function updateUI(eventName: string) {
+async function updateUI(eventName: string, changedNoteId?: string) {
     //during sync do nothing;
     if (syncOngoing) { return; }
 
@@ -212,31 +253,47 @@ async function updateUI(eventName: string) {
         nodeGroupMap = await joplinData.buildNodeGroupMap(graphSettings.GROUPS as Map<string, ColorGroup>);
 
     } else if (eventName === "noteChange") {
-        // Don't update the graph is the links in this note haven't changed.
         const selectedNote = await joplin.workspace.selectedNote();
-        const noteLinks = Array.from(joplinData.getAllLinksForNote(selectedNote.body));
 
-        if (selectedNote.title !== prevNoteTitle) {
-
-            prevNoteTitle = selectedNote.title;
-            eventName += ":title";
-
-            resp = {
-                updateType: "updateNodeTitle",
-                noteId: selectedNote.id,
-                newTitle: selectedNote.title
-            };
-
-        // } else if (!deepEqual(noteLinks, prevNoteLinks)) {
-        } else if (!arraysEqual(noteLinks, prevNoteLinks)) {
-
-            prevNoteLinks = noteLinks;
-            eventName += ":links";
-            data = await fetchData({degree: maxDegree});
-
+        // If a linked note (not the selected one) changed and is in the current
+        // graph, refetch so edges to/from it stay current.
+        if (changedNoteId && changedNoteId !== selectedNote.id) {
+            if (data && data.nodes.some(n => n.id === changedNoteId)) {
+                eventName += ":links";
+                data = await fetchData({
+                    degree: maxDegree,
+                    filterQuery: graphSettings.FILTER as string,
+                });
+            } else {
+                eventName += ":other";
+            }
         } else {
+            const noteLinks = Array.from(joplinData.getAllLinksForNote(selectedNote.body));
 
-            eventName += ":other";
+            if (selectedNote.title !== prevNoteTitle) {
+
+                prevNoteTitle = selectedNote.title;
+                eventName += ":title";
+
+                resp = {
+                    updateType: "updateNodeTitle",
+                    noteId: selectedNote.id,
+                    newTitle: selectedNote.title
+                };
+
+            } else if (!arraysEqual(noteLinks, prevNoteLinks)) {
+
+                prevNoteLinks = noteLinks;
+                eventName += ":links";
+                data = await fetchData({
+                    degree: maxDegree,
+                    filterQuery: graphSettings.FILTER as string,
+                });
+
+            } else {
+
+                eventName += ":other";
+            }
         }
 
     } else if (eventName === "noteSelectionChange") {
@@ -271,7 +328,7 @@ async function updateUI(eventName: string) {
         data.graphSettings = graphSettings;
         prevSettings = Object.assign({}, graphSettings);
     } else if (eventName === "colorsChange") {
-        // don't need to fetch new nodes, just update node to color map and 
+        // don't need to fetch new nodes, just update node to color map and
         // update nodes
         const change = getGroupChange(graphSettings.GROUPS, prevSettings.GROUPS);
         const action = change.action, groupName = change.group;
@@ -279,7 +336,7 @@ async function updateUI(eventName: string) {
         if (action === "add" || action === "filter") {
             const groupFilter = graphSettings.GROUPS[groupName].filter;
             const searchResult = await joplinData.executeSearch(groupFilter);
-            const nodeIds = searchResult.map(({ id, }) => id)
+            const nodeIds = searchResult.map(({ id }) => id)
             const nodeColorMap = new Map();
 
             for (let nodeId of nodeIds) {
@@ -288,7 +345,7 @@ async function updateUI(eventName: string) {
             nodeGroupMap.set(groupName, nodeColorMap);
         } else if (action === "color") {
             const group = nodeGroupMap.get(groupName)
-            for (let [key, _] of group.entries()) {
+            for (const key of group.keys()) {
                 group.set(key, graphSettings.GROUPS[groupName].color);
             }
         } else if (action === "remove") {
@@ -304,13 +361,29 @@ async function updateUI(eventName: string) {
     }
 
     for (let node of data.nodes) {
-        node.color = '';
-        for (let [_, nodeMap] of nodeGroupMap.entries())
-            if (nodeMap.has(node.id)) node.color = nodeMap.get(node.id);
+        for (let [_, nodeColorMap] of nodeGroupMap.entries())
+            if (nodeColorMap.has(node.id)) node.color = nodeColorMap.get(node.id);
     }
 
     modelChanges.push({ name: eventName, data: data, resp: resp});
     notifyUI();
+}
+
+async function getTimelineData(): Promise<object> {
+    const selectedNote = await joplin.workspace.selectedNote();
+    if (!selectedNote) return { events: [], rootNoteId: '' };
+
+    const events = parseTimelineEvents(selectedNote.id, selectedNote.title, selectedNote.body);
+
+    const linkedIds = Array.from(joplinData.getAllLinksForNote(selectedNote.body));
+    if (linkedIds.length > 0) {
+        const linkedNotes = await joplinData.getNoteArray(linkedIds);
+        for (const note of linkedNotes)
+            events.push(...parseTimelineEvents(note.id, note.title, note.body));
+    }
+
+    events.sort((a, b) => a.start.localeCompare(b.start));
+    return { events, rootNoteId: selectedNote.id };
 }
 
 function getGroupChange(cur: any, prev: any) {

@@ -51,16 +51,32 @@ export async function registerSettings() {
       public: false,
       label: "Max degree of separation",
       description:
-        "Maximum number of link jumps from selected note. Zero for all notes",
+        "Maximum number of link jumps from selected note. Set to -1 (displayed as G) to show all notes. Zero shows only the selected note.",
+    },
+    SCOPE_TO_NOTEBOOK: {
+      value: false,
+      type: SettingItemType.Bool,
+      section: sectionName,
+      public: true,
+      label: "Scope to current notebook",
+      description: "When enabled, only notes from the currently open notebook are shown.",
+    },
+    SHOW_TAG_NODES: {
+      value: true,
+      type: SettingItemType.Bool,
+      section: sectionName,
+      public: true,
+      label: "Show tag nodes",
+      description: "When enabled, tags appear as nodes in the graph.",
     },
     SHOW_TAGS: {
       value: true,
       type: SettingItemType.Bool,
       section: sectionName,
       public: true,
-      label: "Show tags as nodes in a graph",
+      label: "Color nodes by tag",
       description:
-        "",
+        "When enabled, note nodes are colored based on their first tag.",
     },
     INCLUDE_BACKLINKS: {
       value: true,
