@@ -83,7 +83,7 @@ async function collectGraphSettings() {
     return await joplin.settings.values([
         'FILTER', 'MAX_TREE_DEPTH', 'QUERY', 'SHOW_TAGS', 'SHOW_TAG_NODES', 'INCLUDE_BACKLINKS', 'GROUPS',
         'ALPHA', 'CENTER_STRENGTH', 'CHARGE_STRENGTH', 'COLLIDE_RADIUS', 'LINK_DISTANCE',
-        'MAX_TEXT_WIDTH', 'SCOPE_TO_NOTEBOOK'
+        'MAX_TEXT_WIDTH', 'SCOPE_TO_NOTEBOOK', 'CLUSTER_BY_HOP', 'HOP_RING_SPACING'
     ]);
 }
 
@@ -152,6 +152,14 @@ async function fetchData(spec: DataSpec) {
         });
 
     }
+
+    const edgeSet = new Set(data.edges.map(e => `${e.source}|${e.target}`));
+    for (const edge of data.edges) {
+        if (edgeSet.has(`${edge.target}|${edge.source}`)) {
+            edge.isBidirectional = true;
+        }
+    }
+
     return data;
 }
 

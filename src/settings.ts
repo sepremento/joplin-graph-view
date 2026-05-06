@@ -147,5 +147,24 @@ export async function registerSettings() {
       description:
         "The higher this setting the slower and the better the simulation will converge.",
     },
+    CLUSTER_BY_HOP: {
+      value: false,
+      type: SettingItemType.Bool,
+      section: sectionName,
+      public: true,
+      label: "Cluster by hop distance",
+      description: "Arrange nodes in rings by link distance from the selected note.",
+    },
+    HOP_RING_SPACING: {
+      advanced: true,
+      value: 150,
+      type: SettingItemType.Int,
+      minimum: 50,
+      maximum: 600,
+      section: sectionName,
+      public: true,
+      label: "Hop ring spacing (px)",
+      description: "Distance between hop rings when cluster mode is active.",
+    },
   });
 }

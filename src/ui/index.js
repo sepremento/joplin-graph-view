@@ -266,16 +266,24 @@ function createGraph() {
     };
 
     function initSimulation() {
-        return d3.forceSimulation(graphNodes)
+        const clusterMode = !!graphSettings.CLUSTER_BY_HOP;
+        const ringSpacing = graphSettings.HOP_RING_SPACING || 150;
+        const cx = width / 2, cy = height / 2;
+
+        const hopDistances = graphNodes
+            .map(n => n.distanceToCurrentNode)
+            .filter(d => d !== undefined && isFinite(d));
+        const maxHop = hopDistances.length > 0 ? Math.max(...hopDistances) : 0;
+        const fallbackRadius = (maxHop + 1) * ringSpacing;
+
+        const sim = d3.forceSimulation(graphNodes)
             .force("link", d3.forceLink(graphLinks)
                 .id(d => d.id)
                 .distance(graphSettings.LINK_DISTANCE)
-            )
-            .force("posX", d3.forceX(width / 2)
-                .strength(graphSettings.CENTER_STRENGTH / 100)
-            )
-            .force("posY", d3.forceY(height / 2)
-                .strength(graphSettings.CENTER_STRENGTH / 100)
+                .strength(link => {
+                    if (!clusterMode) return 1;
+                    return link.isBidirectional ? 2.0 : 0.5;
+                })
             )
             .force("charge", d3.forceManyBody()
                 .strength(graphSettings.CHARGE_STRENGTH)
@@ -283,6 +291,31 @@ function createGraph() {
             .force("nocollide", d3.forceCollide(graphSettings.COLLIDE_RADIUS))
             .alpha(graphSettings.ALPHA / 100)
             .on("tick", throttledDraw);
+
+        if (clusterMode) {
+            sim.force("posX", d3.forceX(cx).strength(d =>
+                d.distanceToCurrentNode === 0 ? 0.8 : 0
+            ));
+            sim.force("posY", d3.forceY(cy).strength(d =>
+                d.distanceToCurrentNode === 0 ? 0.8 : 0
+            ));
+            sim.force("radial", d3.forceRadial(d => {
+                const dist = d.distanceToCurrentNode;
+                if (dist === 0) return 0;
+                if (dist === undefined || !isFinite(dist)) return fallbackRadius;
+                return dist * ringSpacing;
+            }, cx, cy).strength(0.6));
+        } else {
+            sim.force("posX", d3.forceX(cx)
+                .strength(graphSettings.CENTER_STRENGTH / 100)
+            );
+            sim.force("posY", d3.forceY(cy)
+                .strength(graphSettings.CENTER_STRENGTH / 100)
+            );
+            sim.force("radial", null);
+        }
+
+        return sim;
     };
 
     function navigateTo(event) {
@@ -398,22 +431,26 @@ function createGraph() {
 
         updateGraph(data) {
             if (!simulation) { simulation = initSimulation(); }
-            if (!transform) { transform = d3.zoomIdentity; } 
+            if (!transform) { transform = d3.zoomIdentity; }
 
             simulation.stop();
 
             graphNodes = data.nodes.map(d => {
                 if (!graphNodesMap.has(d.id)) graphNodesMap.set(d.id, d);
                 return Object.assign(graphNodesMap.get(d.id) || {}, d);
-            }); 
+            });
             graphLinks = data.edges;
             spanningTree = data.spanningTree;
 
-            if (!simulation) simulation = initSimulation();
-            if (graphNodes.length < 20 && transform.k < 0.7) resetZoom();
+            if (graphSettings.CLUSTER_BY_HOP) {
+                simulation = initSimulation();
+            } else {
+                if (!simulation) simulation = initSimulation();
+                simulation.nodes(graphNodes);
+                simulation.force("link").links(graphLinks);
+            }
 
-            simulation.nodes(graphNodes);
-            simulation.force("link").links(graphLinks);
+            if (graphNodes.length < 20 && transform.k < 0.7) resetZoom();
             simulation.alpha(graphSettings.ALPHA / 100).restart();
         },
 
@@ -426,8 +463,17 @@ function createGraph() {
         },
 
         updateSettings(data) {
+            const wasCluster = !!graphSettings.CLUSTER_BY_HOP;
             graphSettings = Object.assign(graphSettings, data.graphSettings);
             userInput.setupGraphHandle(graphSettings);
+            const isCluster = !!graphSettings.CLUSTER_BY_HOP;
+
+            if (wasCluster !== isCluster || isCluster) {
+                simulation.stop();
+                simulation = initSimulation();
+                simulation.alpha(graphSettings.ALPHA / 100).restart();
+                return;
+            }
 
             simulation.force("link").distance(graphSettings.LINK_DISTANCE);
             simulation.force("posX").strength(graphSettings.CENTER_STRENGTH / 100);

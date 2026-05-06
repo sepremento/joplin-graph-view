@@ -13,6 +13,7 @@ export interface JoplinNote {
 export interface Edge {
   source: string;
   target: string;
+  isBidirectional?: boolean;
   // sourceDistanceToCurrentNode?: number;
   // targetDistanceToCurrentNode?: number;
   // focused: boolean;
@@ -59,6 +60,8 @@ export interface GraphSettings {
   linkDistance: number;
   linkStrength: number;
   alpha: number;
+  CLUSTER_BY_HOP?: boolean;
+  HOP_RING_SPACING?: number;
 }
 
 export interface TimelineEvent {

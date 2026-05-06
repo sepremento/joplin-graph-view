@@ -20,6 +20,8 @@ const includeBacklinksSwitch = document.getElementById("include-backlinks-switch
 const scopeNotebookSwitch = document.getElementById("scope-notebook-switch") as HTMLInputElement;
 const maxDistInput = document.getElementById("distance-slider") as HTMLInputElement;
 const temperatureInput = document.getElementById("temperature-slider") as HTMLInputElement;
+const clusterHopSwitch = document.getElementById("cluster-hop-switch") as HTMLInputElement;
+const hopRingSpacingInput = document.getElementById("hop-ring-spacing-input") as HTMLInputElement;
 
 const scale = [
     "#a6cee3", "#1f78b4", "#b2df8a", "#33a02c", "#fb9a99", "#e31a1c",
@@ -92,6 +94,8 @@ export function setupGraphHandle(settings) {
     collideRadiusInput.value = settings.COLLIDE_RADIUS;
     linkDistanceInput.value = settings.LINK_DISTANCE;
     temperatureInput.value = settings.ALPHA;
+    clusterHopSwitch.checked = !!settings.CLUSTER_BY_HOP;
+    hopRingSpacingInput.value = settings.HOP_RING_SPACING ?? 150;
 
 }
 
@@ -216,6 +220,12 @@ export function initFront(initialValues, setSetting, refreshGraph) {
     });
     temperatureInput.addEventListener("change", () => {
         setSetting("ALPHA", temperatureInput.valueAsNumber);
+    });
+    clusterHopSwitch.addEventListener("change", () => {
+        setSetting("CLUSTER_BY_HOP", clusterHopSwitch.checked);
+    });
+    hopRingSpacingInput.addEventListener("change", () => {
+        setSetting("HOP_RING_SPACING", hopRingSpacingInput.valueAsNumber);
     });
     showTagNodesSwitch.addEventListener("change", () => {
         setSetting("SHOW_TAG_NODES", showTagNodesSwitch.checked);
