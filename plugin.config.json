@@ -1,3 +1,3 @@
 {
-	"extraScripts": ["ui/index.js"]
+	"extraScripts": ["ui/index.js", "editor/noteLinker.js"]
 }

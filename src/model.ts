@@ -7,11 +7,13 @@ export interface JoplinNote {
     id: string;
     title: string;
     body: string;
+    parent_id?: string;
 }
 
 export interface Edge {
   source: string;
   target: string;
+  isBidirectional?: boolean;
   // sourceDistanceToCurrentNode?: number;
   // targetDistanceToCurrentNode?: number;
   // focused: boolean;
@@ -29,6 +31,7 @@ export interface Node {
     num_links: number;
     num_forwardlinks: number;
     num_backlinks: number;
+    body_size?: number;
     /**
    * (Minimal) distance of this note to current/selected note in Joplin
    * 0 => current note itself
@@ -57,6 +60,22 @@ export interface GraphSettings {
   linkDistance: number;
   linkStrength: number;
   alpha: number;
+  CLUSTER_BY_HOP?: boolean;
+  HOP_RING_SPACING?: number;
+}
+
+export interface TimelineEvent {
+    noteId: string;
+    noteTitle: string;
+    label: string;
+    start: string;
+    end?: string;
+    type: 'point' | 'range';
+}
+
+export interface TimelineData {
+    events: TimelineEvent[];
+    rootNoteId: string;
 }
 
 export interface PreprocessedFilter {

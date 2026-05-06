@@ -1,6 +1,35 @@
 import joplin from "api";
 import { ColorGroup, JoplinNote, Node, PreprocessedFilter } from './model'
 
+const tagColorCache = new Map<string, string>();
+
+function getTagColor(tagId: string): string {
+    if (!tagColorCache.has(tagId)) {
+        let hash = 0;
+        for (let i = 0; i < tagId.length; i++) {
+            hash = ((hash << 5) - hash) + tagId.charCodeAt(i);
+            hash |= 0;
+        }
+        const hue = Math.abs(hash * 137) % 360;
+        tagColorCache.set(tagId, `hsl(${hue}, 65%, 55%)`);
+    }
+    return tagColorCache.get(tagId);
+}
+
+async function applyTagColors(nodeMap: Map<string, Node>): Promise<void> {
+    const noteIds = Array.from(nodeMap.keys()).filter(id => !nodeMap.get(id).is_tag);
+    const promises = noteIds.map(id =>
+        joplin.data.get(["notes", id, "tags"], { fields: ["id"] })
+    );
+    const results = await Promise.all(promises.map(p => p.catch(e => e)));
+    for (let i = 0; i < noteIds.length; i++) {
+        if (results[i] instanceof Error) continue;
+        const tags = results[i].items;
+        if (!tags || tags.length === 0) continue;
+        nodeMap.get(noteIds[i]).color = getTagColor(tags[0].id);
+    }
+}
+
 
 export interface Notebook {
     title: string;
@@ -12,7 +41,8 @@ export interface Notebook {
 export async function getNodes(
     selectedNotes: Array<string>,
     maxDegree: number,
-    filterQuery: string
+    filterQuery: string,
+    notebookId?: string
 ): Promise<Map<string, Node>> {
 
     const maxNotes = await joplin.settings.value("MAX_NODES");
@@ -33,10 +63,22 @@ export async function getNodes(
             selectedNotes,
             maxDegree,
             noteIdsToExclude,
+            notebookId,
         );
         nodes = filterByNumLinks(nodes, prep);
     } else {
-        nodes = await getAllNodes(maxNotes, noteIdsToExclude);
+        nodes = await getAllNodes(maxNotes, noteIdsToExclude, notebookId);
+    }
+
+    const showTagNodes = await joplin.settings.value('SHOW_TAG_NODES');
+    if (showTagNodes) {
+        const tagNodes = await buildTagNodes(nodes, maxDegree < 0);
+        for (const [id, node] of tagNodes.entries()) nodes.set(id, node);
+    }
+
+    const showTags = await joplin.settings.value('SHOW_TAGS');
+    if (showTags) {
+        await applyTagColors(nodes);
     }
 
     return nodes;
@@ -46,15 +88,15 @@ export async function getNodes(
 async function getAllNodes(
     maxNotes: number,
     noteIdsToExclude: Set<string>,
+    notebookId?: string,
 ): Promise<Map<string, Node>> {
-    const showTags = await joplin.settings.value('SHOW_TAGS');
-
     var allNotes = new Array<JoplinNote>();
     var page_num = 1;
+    const notePath = notebookId ? ["folders", notebookId, "notes"] : ["notes"];
 
     do {
-        var notes = await joplin.data.get(["notes"], {
-            fields: ["id", "title", "body"],
+        var notes = await joplin.data.get(notePath, {
+            fields: ["id", "title", "body", "parent_id"],
             order_by: "updated_time",
             order_dir: "DESC",
             limit: maxNotes < 100 ? maxNotes : 100,
@@ -73,19 +115,13 @@ async function getAllNodes(
         nodeMap.set(note.id, note);
     }
 
-    if (showTags) {
-        const tagNodes = await buildTagNodes(nodeMap, true);
-
-        for (let [id, tag] of tagNodes.entries()) {
-            if (!nodeMap.has(id)) nodeMap.set(id, tag);
-        }
-    }
     return nodeMap;
 }
 
 
 function buildNodeFromNote(joplinNote: JoplinNote): Node {
     const links: Set<string> = getAllLinksForNote(joplinNote.body);
+    const body_size = joplinNote.body ? joplinNote.body.length : 0;
     joplinNote.body = null;
     return {
         id: joplinNote.id,
@@ -94,6 +130,7 @@ function buildNodeFromNote(joplinNote: JoplinNote): Node {
         forwardlinks: links,
         backlinks: new Array<string>(),
         num_links: links.size,
+        body_size,
         num_forwardlinks: links.size,
         num_backlinks: 0
     };
@@ -106,6 +143,7 @@ async function getLinkedNodes(
     source_ids: Array<string>,
     maxDegree: number,
     noteIdsToExclude: Set<string>,
+    notebookId?: string,
 ): Promise<Map<string, Node>> {
 
     var pending = source_ids;
@@ -114,7 +152,7 @@ async function getLinkedNodes(
     const backlinksMap = new Map();
     var degree = 0;
 
-    const opts = await joplin.settings.values(['SHOW_TAGS', 'INCLUDE_BACKLINKS']);
+    const opts = await joplin.settings.values(['INCLUDE_BACKLINKS']);
 
     do {
         // Traverse a new batch of pending note ids, storing the note data in
@@ -142,6 +180,9 @@ async function getLinkedNodes(
         }
 
         for (const joplinNote of joplinNotes) {
+            // Skip notes outside the target notebook when scoping is active.
+            if (notebookId && joplinNote.parent_id !== notebookId) continue;
+
             // store note data to be returned at the end of the traversal
             const node = buildNodeFromNote(joplinNote);
 
@@ -167,17 +208,6 @@ async function getLinkedNodes(
             }
         }
 
-        if (opts.SHOW_TAGS) {
-            const tagNodes = await buildTagNodes(nodeMap, false);
-
-            for (let [id, tag] of tagNodes.entries()) {
-                if (!nodeMap.has(id)) nodeMap.set(id, tag);
-
-                for (let link of tag.forwardlinks) {
-                    if (!visited.has(link)) pending.push(link);
-                }
-            }
-        }
 
         degree++;
 
@@ -252,8 +282,7 @@ export async function buildTagNodes(nodes: Map<string, Node>, all: boolean): Pro
     for (let i=0; i < uniqueTags.length; i++) {
         if (notesForTags[i] instanceof Error) continue;
 
-        const tagId = uniqueTags[i].id;
-        const title = uniqueTags[i].title;
+        const { id: tagId, title } = uniqueTags[i];
         const links = notesForTags[i].items.map(({ id }) => id);
 
         if (links.length === 0) continue;
@@ -310,10 +339,10 @@ export async function executeSearch(query: string): Promise<Array<JoplinNote>> {
 }
 
 
-async function getNoteArray(ids: string[]): Promise<Array<JoplinNote>> {
+export async function getNoteArray(ids: string[]): Promise<Array<JoplinNote>> {
     var promises = ids.map((id) =>
         joplin.data.get(["notes", id], {
-            fields: ["id", "title", "body"],
+            fields: ["id", "title", "body", "parent_id"],
         })
     );
 
@@ -329,10 +358,11 @@ async function getNoteArray(ids: string[]): Promise<Array<JoplinNote>> {
 
 export function getAllLinksForNote(noteBody: string): Set<string> {
     const links = new Set<string>();
+    if (!noteBody) return links;
     // TODO: needs to handle resource links vs note links. see 4. Tips note for
     // webclipper screenshot.
     // https://stackoverflow.com/questions/37462126/regex-match-markdown-link
-    const linkRegexp = /\[\]|\[.*?\]\(:\/(.*?)\)/g;
+    const linkRegexp = /\[.*?\]\(:\/(.*?)\)/g;
     var match = null;
     do {
         match = linkRegexp.exec(noteBody);

@@ -51,16 +51,32 @@ export async function registerSettings() {
       public: false,
       label: "Max degree of separation",
       description:
-        "Maximum number of link jumps from selected note. Zero for all notes",
+        "Maximum number of link jumps from selected note. Set to -1 (displayed as G) to show all notes. Zero shows only the selected note.",
+    },
+    SCOPE_TO_NOTEBOOK: {
+      value: false,
+      type: SettingItemType.Bool,
+      section: sectionName,
+      public: true,
+      label: "Scope to current notebook",
+      description: "When enabled, only notes from the currently open notebook are shown.",
+    },
+    SHOW_TAG_NODES: {
+      value: true,
+      type: SettingItemType.Bool,
+      section: sectionName,
+      public: true,
+      label: "Show tag nodes",
+      description: "When enabled, tags appear as nodes in the graph.",
     },
     SHOW_TAGS: {
       value: true,
       type: SettingItemType.Bool,
       section: sectionName,
       public: true,
-      label: "Show tags as nodes in a graph",
+      label: "Color nodes by tag",
       description:
-        "",
+        "When enabled, note nodes are colored based on their first tag.",
     },
     INCLUDE_BACKLINKS: {
       value: true,
@@ -130,6 +146,25 @@ export async function registerSettings() {
       label: "Alpha Target",
       description:
         "The higher this setting the slower and the better the simulation will converge.",
+    },
+    CLUSTER_BY_HOP: {
+      value: false,
+      type: SettingItemType.Bool,
+      section: sectionName,
+      public: true,
+      label: "Cluster by hop distance",
+      description: "Arrange nodes in rings by link distance from the selected note.",
+    },
+    HOP_RING_SPACING: {
+      advanced: true,
+      value: 150,
+      type: SettingItemType.Int,
+      minimum: 50,
+      maximum: 600,
+      section: sectionName,
+      public: true,
+      label: "Hop ring spacing (px)",
+      description: "Distance between hop rings when cluster mode is active.",
     },
   });
 }
